@@ -10,6 +10,15 @@ static int32_t DefaultDim = 0;
 static bool DrawBehind = false;
 static std::map<int32_t, int32_t> PVSettings;
 
+// NOTE: Hotkey settings
+static int32_t HotKeyDarker = 0xBD;   // -
+static int32_t HotKeyBrighter = 0xBB; // =
+static int32_t HotKeyStep = 10;
+
+// NOTE: Hotkey state tracking to prevent key repeat
+static bool KeyDarkerPressed = false;
+static bool KeyBrighterPressed = false;
+
 //
 static int32_t DimPercentage = 0;
 
@@ -40,6 +49,32 @@ HOOK(int64_t, __fastcall, TaskPvGameInit, 0x1405DA040, uint64_t a1)
 
 HOOK(uint64_t, __fastcall, TaskPvGameDisp, 0x1405DA090, uint64_t a1)
 {
+	// NOTE: Check for hotkey inputs
+	bool darkerPressed = (GetAsyncKeyState(HotKeyDarker) & 0x8000) != 0;
+	bool brighterPressed = (GetAsyncKeyState(HotKeyBrighter) & 0x8000) != 0;
+
+	// NOTE: Handle darker (only trigger once per key press)
+	if (darkerPressed && !KeyDarkerPressed)
+	{
+		DimPercentage = Clamp(DimPercentage + HotKeyStep, 0, 100);
+		KeyDarkerPressed = true;
+	}
+	else if (!darkerPressed)
+	{
+		KeyDarkerPressed = false;
+	}
+
+	// NOTE: Handle brighter (only trigger once per key press)
+	if (brighterPressed && !KeyBrighterPressed)
+	{
+		DimPercentage = Clamp(DimPercentage - HotKeyStep, 0, 100);
+		KeyBrighterPressed = true;
+	}
+	else if (!brighterPressed)
+	{
+		KeyBrighterPressed = false;
+	}
+
 	// NOTE: Draw dim rectangle
 	if (DimPercentage > 0)
 	{
@@ -67,6 +102,11 @@ static void LoadSettings()
 	toml::table tbl = toml::parse_file("config.toml");
 	DefaultDim = tbl["settings"]["default_dim"].value_or<int32_t>(0);
 	DrawBehind = tbl["settings"]["behind_pv_aet"].value_or<bool>(false);
+
+	// NOTE: Load hotkey settings
+	HotKeyDarker = tbl["settings"]["hotkey_darker"].value_or<int32_t>(0xBD);   // -
+	HotKeyBrighter = tbl["settings"]["hotkey_brighter"].value_or<int32_t>(0xBB); // =
+	HotKeyStep = tbl["settings"]["hotkey_step"].value_or<int32_t>(10);
 
 	if (toml::array* arr = tbl["settings"]["pv_settings"].as_array())
 	{
