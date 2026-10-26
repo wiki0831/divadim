@@ -22,7 +22,7 @@ static bool KeyBrighterPressed = false;
 //
 static int32_t DimPercentage = 0;
 
-//
+// NOTE: Same address in every known version
 static const int32_t* CurrentPvID = (const int32_t*)0x14CBFFE2C;
 
 //
@@ -33,7 +33,40 @@ static inline int32_t Clamp(int32_t v, int32_t min, int32_t max)
 	return v;
 }
 
-HOOK(int64_t, __fastcall, TaskPvGameInit, 0x1405DA040, uint64_t a1)
+// NOTE: Function addresses differ between game versions, see DECODING_NEW_EXE.md
+struct GameVersion
+{
+	uintptr_t taskPvGameInit;
+	uintptr_t taskPvGameDisp;
+	uintptr_t drawRectangle;
+};
+
+static const GameVersion Versions[] =
+{
+	{ 0x1405DA040, 0x1405DA090, 0x1405B4D40 }, // Current Steam version
+	{ 0x1405DA000, 0x1405DA050, 0x1405B4D00 }, // Early 2023 version
+};
+
+// NOTE: Start of DrawRectangle, identical in every known version
+static const uint8_t DrawRectangleSignature[] =
+{
+	0x48, 0x89, 0x5C, 0x24, 0x08, 0x44, 0x89, 0x4C, 0x24, 0x20,
+	0x55, 0x56, 0x57, 0x48, 0x81, 0xEC, 0xA0, 0x01, 0x00, 0x00
+};
+
+static bool Matches(uintptr_t address, const uint8_t* bytes, size_t size)
+{
+	__try
+	{
+		return memcmp((const void*)address, bytes, size) == 0;
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		return false;
+	}
+}
+
+HOOK(int64_t, __fastcall, TaskPvGameInit, 0, uint64_t a1)
 {
 	int64_t ret = originalTaskPvGameInit(a1);
 
@@ -47,7 +80,7 @@ HOOK(int64_t, __fastcall, TaskPvGameInit, 0x1405DA040, uint64_t a1)
 	return ret;
 }
 
-HOOK(uint64_t, __fastcall, TaskPvGameDisp, 0x1405DA090, uint64_t a1)
+HOOK(uint64_t, __fastcall, TaskPvGameDisp, 0, uint64_t a1)
 {
 	// NOTE: Check for hotkey inputs
 	bool darkerPressed = (GetAsyncKeyState(HotKeyDarker) & 0x8000) != 0;
@@ -128,8 +161,21 @@ extern "C"
 {
 	void __declspec(dllexport) Init()
 	{
-		LoadSettings();
-		INSTALL_HOOK(TaskPvGameInit);
-		INSTALL_HOOK(TaskPvGameDisp);
+		for (const GameVersion& version : Versions)
+		{
+			if (!Matches(version.drawRectangle, DrawRectangleSignature, sizeof(DrawRectangleSignature)))
+				continue;
+
+			LoadSettings();
+
+			diva::DrawRectangle = (decltype(diva::DrawRectangle))version.drawRectangle;
+			originalTaskPvGameInit = (TaskPvGameInitDelegate*)version.taskPvGameInit;
+			originalTaskPvGameDisp = (TaskPvGameDispDelegate*)version.taskPvGameDisp;
+			INSTALL_HOOK(TaskPvGameInit);
+			INSTALL_HOOK(TaskPvGameDisp);
+			return;
+		}
+
+		// NOTE: Unknown game version, do nothing instead of crashing
 	}
 };
